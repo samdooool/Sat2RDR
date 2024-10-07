@@ -33,4 +33,4 @@ python3 eval.py
 ### TODO LIST
 
 - [ ] Add Various backbone models
-- [ ] Add Probability head
+- [x] Add Probability head
