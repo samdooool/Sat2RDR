@@ -3,6 +3,7 @@
 ### release notes
 ```
 - 2024.10.07 : Start Project
+- 2024.10.18 : Add - probability head. 
 ```
 
 
