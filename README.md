@@ -1,2 +1,6 @@
 # Sat2RDR
-Rain forecasting
+
+### TODO LIST
+
+- [ ] Add Various backbone models
+- [ ] Add Probability head
