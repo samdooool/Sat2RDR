@@ -35,8 +35,9 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         
         act = nn.ReLU(inplace=True)
+        self.act = act
         input_ch = input_ch
-        n_gf = output_ch
+        n_gf = n_gf
         norm = get_norm_layer(norm_type)
         output_ch = output_ch
         pad = get_pad_layer(padding_type)
@@ -80,7 +81,7 @@ class Generator(nn.Module):
             nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
-        return self.model(x)
+        return self.act(self.model(x))
 
 
 class ResidualBlock(nn.Module):
