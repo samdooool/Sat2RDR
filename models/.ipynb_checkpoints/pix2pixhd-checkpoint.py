@@ -35,9 +35,8 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         
         act = nn.ReLU(inplace=True)
-        self.act = nn.ReLU(inplace=True) # nn.Tanh() (~1 - 1)
         input_ch = input_ch
-        n_gf = n_gf
+        n_gf = output_ch
         norm = get_norm_layer(norm_type)
         output_ch = output_ch
         pad = get_pad_layer(padding_type)
@@ -60,8 +59,8 @@ class Generator(nn.Module):
         model += [pad(3), nn.Conv2d(n_gf, output_ch, kernel_size=7, padding=0)]
         self.model = nn.Sequential(*model)
 
-        #self.init_weights()
-        print(self)
+        self.init_weights()
+
         print("the number of G parameters", sum(p.numel() for p in self.parameters() if p.requires_grad))
 
     def init_weights(self):
@@ -81,7 +80,7 @@ class Generator(nn.Module):
             nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
-        return self.act(self.model(x))
+        return self.model(x)
 
 
 class ResidualBlock(nn.Module):

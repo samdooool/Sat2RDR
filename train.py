@@ -1,4 +1,3 @@
-import argparse
 import logging
 import os
 import pprint
@@ -11,6 +10,7 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from torch.optim import Adam
@@ -25,42 +25,60 @@ from utils import save_images
 
 parser = argparse.ArgumentParser(description='PyTorch sat2rdr Training')
 parser.add_argument('--lr', default=0.0002, type=float, help='learning rate')
-parser.add_argument('--batch_size', default=4, type=float, help='batch size')
+parser.add_argument('--batch_size', default=4, type=int, help='batch size')
 parser.add_argument('--num_workers', default=4, type=float, help='cpu number')
-parser.add_argument('--epoch', default=200, type=float, help='epoch')
+parser.add_argument('--epoch', default=200, type=int, help='epoch')
 
 # python3 train.py --random_crop True --random_hflip True --random_vflip True
-parser.add_argument('--dataroot', default='/workspace/SSD_4T_c/Georain/MS/StegoGAN/dataset/', type=str, help='data path')
+parser.add_argument('--gpu_id', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+parser.add_argument('--dataroot', default='/workspace/utils/Sat2RDR_check/dataset/', type=str, help='data path')
 parser.add_argument('--random_crop', default=False, type=bool, help='Enable random cropping of images.')
 parser.add_argument('--random_hflip', default=False, type=bool, help='Enable random horizontal flipping of images.')
 parser.add_argument('--random_vflip', default=False, type=bool, help='Enable random vertical flipping of images.')
-parser.add_argument('--channels', default=[0, 1, 2, 3], type=int, nargs='+', help='List of channel indices to use.')
+parser.add_argument('--channels', default='0 1 2 3', type=str, help='List of channel indices to use.')
 
+parser.add_argument('--in_ch', default=4, type=int, help='input channels')
+parser.add_argument('--out_ch', default=1, type=int, help='output channels')
+
+parser.add_argument('--out_dir', default='./results_30', type=str, help='result path')
+parser.add_argument('--exp_name', default='', help='identifier for experiment')
 args = parser.parse_args()
-
 
 cudnn.benchmark = True
 
+args.channels = [int(i) for i in args.channels.split(' ')]
 train_dataset = Sat2RrdDataset(dataroot=args.dataroot, phase='train', random_crop=args.random_crop, random_hflip=args.random_hflip, random_vflip=args.random_vflip, channels=args.channels)
 train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
 
-val_dataset = Sat2RrdDataset(dataroot=args.dataroot, phase='test', channels=args.channels)
+val_dataset = Sat2RrdDataset(dataroot=args.dataroot, phase='val', channels=args.channels)
 val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-model_G = Generator(input_ch=4)
-model_D = Discriminator(input_ch=4, output_ch=1)
+model_G = Generator(input_ch=args.in_ch)
+model_D = Discriminator(input_ch=args.in_ch, output_ch=args.out_ch)
 
-model_G.to('cuda:0')
-model_D.to('cuda:0')
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-criterion_gan = GANLoss()
-criterion_siloss = SiLogLoss()
+model_G.to(device)
+model_D.to(device)
+
+if device == 'cuda':
+    model_G = torch.nn.DataParallel(model_G)
+    model_D = torch.nn.DataParallel(model_D)
+    cudnn.benchmark = True
+
+criterion_gan = GANLoss(args)
+#criterion_siloss = SiLogLoss()
+criterion_mse = nn.MSELoss()
 
 model_G_optim = torch.optim.Adam(model_G.parameters(), lr=args.lr, betas=(0.5, 0.999))
 model_D_optim = torch.optim.Adam(model_D.parameters(), lr=args.lr, betas=(0.5, 0.999))
 
 train_total_iters = args.epoch * len(train_dataloader) # n_epochs * len(data_loader)
 val_total_iters = len(val_dataloader)
+
+out_dir = os.path.join(args.out_dir, args.exp_name)
+if not os.path.exists(out_dir):
+    os.makedirs(out_dir)
 
 def train(epoch):
     epoch_loss_G = 0
@@ -72,13 +90,13 @@ def train(epoch):
         model_G.train()
         model_D.train()
 
-        inputs, targets = batchs['A'].to('cuda:0'), batchs['B'].to('cuda:0')
+        inputs, targets = batchs['A'].to('cuda:{}'.format(args.gpu_id)), batchs['B'].to('cuda:{}'.format(args.gpu_id))
         pred = model_G(inputs)
 
         loss_D, loss_G, target, fake = criterion_gan(model_D, model_G, inputs, targets) # D, G, input, target
-        loss_si = criterion_siloss(pred, targets)
-
-        loss_G = loss_G + loss_si
+        #loss_G = criterion_siloss(pred, targets)
+        loss_mse = criterion_mse(pred, targets)
+        loss_G = loss_G + loss_mse
 
         model_G_optim.zero_grad()
         loss_G.backward()
@@ -89,18 +107,20 @@ def train(epoch):
         model_D_optim.step()
 
         iters = epoch * len(train_dataloader) + idx
+           
+        if epoch > 100:
+            lr = args.lr * (1 - iters / train_total_iters) ** 0.9
+
+            model_G_optim.param_groups[0]["lr"] = lr
+            model_D_optim.param_groups[0]["lr"] = lr
+        else: lr = args.lr
             
-        lr = args.lr * (1 - iters / train_total_iters) ** 0.9
-
-        model_G_optim.param_groups[0]["lr"] = lr
-        model_D_optim.param_groups[0]["lr"] = lr
-
         epoch_loss_G += loss_G.item()
         epoch_loss_D += loss_D.item()
 
         pbar.set_postfix({"Loss_G": f"{loss_G.item():.4f}", "Loss_D": f"{loss_D.item():.4f}", "LR": f"{lr:.14f}"})
-
-    torch.save(model_G.state_dict(), f'./results/{epoch}.pth')
+    
+    torch.save(model_G.state_dict(), '%s/%d.pth' % (out_dir, epoch))
 
 def val(epoch):
 
@@ -117,9 +137,13 @@ def val(epoch):
         model_G.eval()
 
         with torch.no_grad():
-            inputs, targets = batchs['A'].to('cuda:0'), batchs['B'].to('cuda:0')
+            inputs, targets = batchs['A'].to('cuda:{}'.format(args.gpu_id)), batchs['B'].to('cuda:{}'.format(args.gpu_id))
             A_path, B_path =  batchs['A_paths'], batchs['B_paths']
             pred = model_G(inputs)
+
+            pred = pred * 100.
+            targets = targets * 100.
+            
             csi, pod, far = cal_csi(pred, targets, threshold=1.0)
             csi_1mm += csi
             pod_1mm += pod
@@ -144,7 +168,7 @@ def val(epoch):
             "CSI 8mm": f"{csi_8mm / (idx + 1):.4f}"
         })
     # epoch, input_image, true_image, pred_image, A_path, B_path
-    save_images(epoch, inputs[-1, 0, :,:], targets[-1,0,:,:], pred[-1,0,:,:], A_path[-1], B_path[-1])
+    save_images(out_dir, epoch, inputs[-1, 0, :,:], targets[-1,0,:,:], pred[-1,0,:,:], A_path[-1], B_path[-1])
     n_batches = len(val_dataloader)
 
     csi_1mm /= n_batches
@@ -170,5 +194,5 @@ def val(epoch):
 if __name__ == "__main__":
     for epoch in range(args.epoch):
         train(epoch)
-        val(epoch)
+        #val(epoch)
 

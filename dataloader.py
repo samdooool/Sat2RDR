@@ -10,18 +10,18 @@ import glob
 class Sat2RrdDataset(Dataset):
     def __init__(self, dataroot, phase, 
             random_crop=False, random_hflip=False, random_vflip=False, channels=[0,1,2,3]):
+
         self.phase = phase
         self.random_crop = random_crop
         self.random_hflip = random_hflip
         self.random_vflip = random_vflip
         self.channels = channels
-        self.B_path = os.path.join(dataroot, phase)
-        self.B_path = os.path.join(self.B_path, phase+'B')
-        self.B_path_list = glob.glob(self.B_path+'/*.npy')
+        self.A_path = os.path.join(dataroot, phase, phase + 'A')
+        self.A_path_list = glob.glob(self.A_path+'/*.npy')
         self.dem = np.expand_dims(np.load("./dem_new.npy"), axis=0)[:,450 - 55: 450 + 245, 450 - 82:450 + 193]
 
     def __len__(self):
-        return len(self.B_path_list)
+        return len(self.A_path_list)
 
     def _random_crop(self, img_A, img_B, crop_size=(224, 224)):
         # _, height, width
@@ -61,12 +61,15 @@ class Sat2RrdDataset(Dataset):
 
     def __getitem__(self, index):
 
-        B_path = self.B_path_list[index]
-        A_path = B_path.replace(self.phase+'B', self.phase+'A')
+        A_path = self.A_path_list[index]
+        B_path = A_path.replace(self.phase+'A', self.phase+'B')
 
         A = np.load(A_path)
         A = np.concatenate((A, self.dem), axis=0)
-        B = np.load(B_path) /71.27572837272393
+        B = np.load(B_path) #/ 100.
+        B = np.clip(B, 0, 100)
+        B = B/100. #(0~1) # relu
+        
 
         if self.phase == 'train':
             if self.random_crop:
@@ -89,8 +92,7 @@ class Sat2RrdDataset(Dataset):
         return {'A': A, 'B': B, 'A_paths': A_path, 'B_paths': B_path}
 
 if __name__ == "__main__":
-    # /workspace/SSD_4T_c/Georain/MS/StegoGAN/dataset/train/trainA
-    dataset = Sat2RrdDataset(dataroot='/workspace/SSD_4T_c/Georain/MS/StegoGAN/dataset/', phase='train')
+    dataset = Sat2RrdDataset(dataroot='/workspace/SSD_4T_b/GK2A/Georain/MS/Dataset/', phase='train')
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=True, num_workers=2)
 
     for idx, data in enumerate(dataloader):

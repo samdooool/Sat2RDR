@@ -17,21 +17,42 @@ class SiLogLoss(nn.Module):
 
     def forward(self, pred, target):
         diff_log = torch.log(target+1) - torch.log(pred+1)
-        loss = torch.sqrt(torch.pow(diff_log, 2).mean() -
-                          self.lambd * torch.pow(diff_log.mean(), 2))
+        loss = torch.sqrt(torch.pow(diff_log, 2).mean() - self.lambd * torch.pow(diff_log.mean(), 2))
 
         return loss
 
 class GANLoss(object):
-    def __init__(self,
+    def __init__(self, args,
             n_D = 1):
-        self.device = torch.device('cuda:0')
+        self.gpu_id = args.gpu_id
+        #self.device = torch.device('cuda:{}'.format(self.gpu_id))
+        self.device = 'cuda'
         self.dtype = torch.float32
 
         self.criterion = nn.MSELoss()
         self.FMcriterion = nn.L1Loss()
         self.lambda_FM = 10
         self.n_D = n_D
+
+    def _discriminate(self, input_label, test_image, D):
+
+        input_concat = torch.cat((input_label, test_image.detach()), dim=1)
+
+        return D(input_concat)
+
+    def _ganLoss(self, inputs, is_real=True):
+        grid = get_grid(inputs[0][-1], is_real=is_real).to(self.device, self.dtype)
+        loss = self.criterion(inputs[0][-1], grid)
+        return loss
+
+
+    def _matchingLoss(self, pred_real, pred_fake):
+        loss_G_GAN_Feat = 0
+        for i in range(len(pred_fake)-1):
+            loss_G_GAN_Feat += self.FMcriterion(pred_fake[i], pred_real[i].detach())
+
+        return loss_G_GAN_Feat
+
 
     def __call__(self, D, G, input, target):
         loss_D = 0
@@ -40,25 +61,22 @@ class GANLoss(object):
 
         fake = G(input)
 
-        real_features = D(torch.cat((input, target), dim=1))
-        fake_features = D(torch.cat((input, fake.detach()), dim=1))
+        #fake detection and loss
+        pred_fake_pool = self._discriminate(input, fake, D)
+        loss_D_fake = self._ganLoss(pred_fake_pool, False)
 
-        for i in range(self.n_D):
-            real_grid = get_grid(real_features[i][-1], is_real=True).to(self.device, self.dtype)
-            fake_grid = get_grid(fake_features[i][-1], is_real=False).to(self.device, self.dtype)
+        #real detection and loss
+        pred_real = self._discriminate(input, target, D)
+        loss_D_real = self._ganLoss(pred_real, True)
 
-            loss_D += (self.criterion(real_features[i][-1], real_grid) +
-                       self.criterion(fake_features[i][-1], fake_grid)) * 0.5
+        #GAN loss(fake passability loss)
+        pred_fake = D(torch.cat((input, fake), dim=1))
+        loss_G = self._ganLoss(pred_fake, True)
 
-        fake_features = D(torch.cat((input, fake), dim=1))
+        loss_fm = self._matchingLoss(pred_real, pred_fake)
 
-        for i in range(self.n_D):
-            real_grid = get_grid(fake_features[i][-1], is_real=True).to(self.device, self.dtype)
-            loss_G += self.criterion(fake_features[i][-1], real_grid)
-
-            for j in range(len(fake_features[0])):
-                loss_G_FM += self.FMcriterion(fake_features[i][j], real_features[i][j].detach())
-
-            loss_G += loss_G_FM * (1.0 / self.n_D) * self.lambda_FM
+        loss_D = (loss_D_fake + loss_D_real)*0.5
+        #loss_G = loss_fm*0.25 + loss_G*0.5
+        loss_G = (loss_fm*10.0 + loss_G)
 
         return loss_D, loss_G, target, fake
