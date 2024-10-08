@@ -12,6 +12,7 @@ class PatchDiscriminator(nn.Module):
         super(PatchDiscriminator, self).__init__()
 
         act = nn.LeakyReLU(0.2, inplace=True)
+        self.act = nn.Tanh()
         input_channel = input_ch + output_ch
         n_df = n_df
         norm = nn.InstanceNorm2d
