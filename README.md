@@ -34,4 +34,5 @@ python3 eval.py
 ### TODO LIST
 
 - [ ] Add Various backbone models
+- [ ] Fix weight save code for hardware memory
 - [x] Add Probability head
