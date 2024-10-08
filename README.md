@@ -36,3 +36,8 @@ python3 eval.py
 - [ ] Add Various backbone models
 - [x] Fix weight save code for hardware memory <---- **Doyi**
 - [x] Add Probability head
+
+### Sample Image
+
+- Tanh + init (0, 1 channels)
+![747_results](https://github.com/user-attachments/assets/7e5d1c09-266d-493c-8eb3-74378c96b561)
